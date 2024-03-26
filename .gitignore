@@ -2,4 +2,4 @@
 *.jpg
 __pycache__/
 tflite/
-smart_meter
+smart_speed
