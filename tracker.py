@@ -1,14 +1,22 @@
 import math
 import numpy as np
+from collections import defaultdict, deque
 
 class Tracker:
-	""" Tracks Objects in a Frame
+	""" Tracks Objects in a Frame and measures the speed.
 	
-	Tracker class tracks objects in a frame and assign a unique Id.
-		- Operates based on the property midpoint of the top most left 
-		  and bottom right is also conserved
+	Tracker class 
+	 -> Tracks objects in a frame and assign a unique Id.
+		  @ Operates based on the property midpoint of the top most left 
+			and bottom right is also conserved.
+	 -> Measures the speed of the object based on two models:
+		  @ Model One works based on measuring the traveling time in
+		    a given unit of distance
+		  @ Model Two works based on measuring the moving distance in
+			a given unit of time
 		  
 	Attributes:
+		model_one:  Decides the model to use.
 		distance_offset: Diffrence Allowed in Euclidean Distance
 		object_info: A Dictionary containing the object_id and info
 					 about the objects
@@ -17,18 +25,54 @@ class Tracker:
 		gone_down: A list that stores the object_id of object gone down
 		object_time_stamp: A list that stores the time stamp of objects 
 						   i.e before and after
+		coordinates_y: Stores the coordinate of y for an object in every 
+					   frame per sec
 	"""
 	
-	def __init__(self, distance_offset=90):
+	def __init__(self, model_one=True, distance_offset=90, fps=3):
 		""" Intializes the Tracker Object
 		
+		Args:
+			model_one: Condition to determine the model
+			distance_offset: Allowed margin of error in distance
+			fps: Number of frames per second
 		"""
 		self.object_info = {}
 		self.distance_offset = distance_offset
-		self.going_down = []
-		self.gone_down = []
-		self.object_time_stamp = [0, 0]
 		self.id_ = 0
+		if model_one:
+			self.going_down = []
+			self.gone_down = []
+			self.object_time_stamp = [0, 0]
+		else:
+			self.coordinates_y = defaultdict(lambda: deque(maxlen=fps))
+			
+	def populate_coordinates_y(self, id_, y_coordinate):
+		""" Populate the Coordinate y property
+		
+		Args:
+			id_: Object Id
+			y_cordinate: Position of the object on the y axis
+		"""
+		self.coordinates_y[id_].append(y_coordinate)
+	
+	def calculate_object_speed_in_km_per_hr_model_two(self, id_):
+		""" Calculate Speed of the object from measuring the 
+			distance in a unit of time
+		
+		Args:
+			id_: Object id
+			
+		Returns:
+			Speed of moving object
+		"""
+		coordinate_start = self.coordinates_y[id_][0]
+		coordinate_end = self.coordinates_y[id_][-1]
+		distance_covered = abs(coordinate_end - coordinate_start)
+		time = len(self.coordinates_y[id_]) / self.coordinates_y[id_].maxlen
+		speed = round(distance_covered / time * 3.6)
+		
+		return speed
 		
 	def populate_going_down(self, id_):
 		""" Add Id to list of object going down
@@ -51,7 +95,7 @@ class Tracker:
 			self.object_time_stamp[1] = time
 		
 			
-	def calculate_object_speed_in_km_per_hr(self, distance):
+	def calculate_object_speed_in_km_per_hr_model_one(self, distance):
 		""" Calculate the speed from object time stamp
 		
 		Args:

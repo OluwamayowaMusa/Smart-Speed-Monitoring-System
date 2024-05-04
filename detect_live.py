@@ -53,7 +53,7 @@ while True:
 		
 		color = [int(i) for i in colors[int(class_)]]
 		add_label(image, box, labels[int(class_)], score, color)
-		text = str(int(fps)) + " FPS"
+		text =  f"{round(fps)} FPS "
 		add_text_to_image(image, text, TEXT_LOCATION, FONT_STYLE, FONT_SIZE,
 					  FONT_COLOR, FONT_THICKNESS)
 		cv2.imshow("Input", image)

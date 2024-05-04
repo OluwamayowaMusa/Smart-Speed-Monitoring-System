@@ -1,8 +1,10 @@
 import cv2
 import time
+import pymysql
 import numpy as np
 import tflite_runtime.interpreter as tflite
 from picamera2 import Picamera2
+from collections import defaultdict, deque
 
 
 def load_labels(label_path):
@@ -17,6 +19,7 @@ def load_labels(label_path):
 	
 	with open(label_path, 'r') as f:
 		return [line.strip() for line in f.readlines()]
+		
 		
 def prepare_interpreter(model_path, num_threads):
 	"""Prepare the tensorflow model runtime
@@ -96,6 +99,7 @@ def add_pad(image):
 									
 	return img_padded
 	
+	
 def process_image(image, input_dimension):
 	""" Process image for inference
 	
@@ -127,6 +131,7 @@ def generate_colors(num_of_colors):
 	"""	
 	
 	return np.random.randint(255, size=(num_of_colors, 3))
+
 
 def add_label(image, box, class_name, score, color):
 	""" Add labels to the image
@@ -216,8 +221,10 @@ def add_id(image, box, class_name, score, color, tracker):
 						font_color, FONT_THICKNESS)
 			
 				
-def calculate_speed(image, box, class_name, score, color, tracker):
-	""" Calculate speed of the moving object
+def calculate_speed_fixed_distance_measure_time(image, box, class_name, score, color, tracker):
+	""" Calculate speed of the moving object based on 
+		measuring the travelling time in a given unit
+		of distance.
 	
 	Args:
 		image: Loaded image
@@ -227,6 +234,7 @@ def calculate_speed(image, box, class_name, score, color, tracker):
 		color: Color of the label
 		tracker: assigns Id to label
 	"""
+	speed = -1
 	font_color = (255, 255, 255) if sum(color) < 144 * 3 else (0, 0, 0)
 	FONT_STYLE = cv2.FONT_HERSHEY_SIMPLEX
 	FONT_THICKNESS = 2
@@ -258,7 +266,7 @@ def calculate_speed(image, box, class_name, score, color, tracker):
 			tracker.populate_object_time_stamp(time.time(), before=False)
 			
 			distance = 30 # Meters
-			speed = tracker.calculate_object_speed_in_km_per_hr(distance)
+			speed = tracker.calculate_object_speed_in_km_per_hr_model_one(distance)
 			cv2.circle(image, (mid_x, mid_y), CIRCLE_RADIUS, color, cv2.FILLED)
 		
 			# Add Label
@@ -271,6 +279,59 @@ def calculate_speed(image, box, class_name, score, color, tracker):
 			text_location = (min_x, min_y + labelsize[1])
 			cv2.putText(image, label, text_location, FONT_STYLE, FONT_SIZE,
 						font_color, FONT_THICKNESS)
+						
+	return speed
+
+def calculate_speed_fixed_time_measure_distance(image, box, class_name, score, color, tracker):
+	""" Calculate speed of the moving object based on 
+		measuring the moving distance in a given unit
+		of time.
+	
+	Args:
+		image: Loaded image
+		box: Array of the coordinates of the box
+		class_name: Label 
+		score: Model Score
+		color: Color of the label
+		tracker: assigns Id to label
+	"""
+	speed = -1
+	font_color = (255, 255, 255) if sum(color) < 144 * 3 else (0, 0, 0)
+	FONT_STYLE = cv2.FONT_HERSHEY_SIMPLEX
+	FONT_THICKNESS = 2
+	FONT_SIZE = 1
+	CIRCLE_RADIUS = 10
+	
+	img_height, img_width = image.shape[:2]
+	min_y = round(box[0] * img_height)
+	min_x = round(box[1] * img_width)
+	max_y = round(box[2] * img_height)
+	max_x = round(box[3] * img_width)
+	mid_x, mid_y = ((min_x + max_x)//2, (min_y + max_y)//2)
+	
+	# Add Bounding Box
+	cv2.rectangle(image, (min_x, min_y), (max_x, max_y), color, 2)
+	
+	id_ = tracker.assign_id((min_x, min_y), (max_x, max_y))
+	tracker.populate_coordinates_y(id_, mid_y)
+	
+	
+	if len(tracker.coordinates_y[id_]) < tracker.coordinates_y[id_].maxlen / 2:
+		label = f"{class_name} {id_}"
+	else:
+		speed = tracker.calculate_object_speed_in_km_per_hr_model_two(id_)
+		label = f"{class_name} {id_} {speed} km/hr"
+			
+		
+	# Add Label
+	labelsize, baseline = cv2.getTextSize(label, FONT_STYLE, FONT_SIZE, FONT_THICKNESS)
+	cv2.rectangle(image, (min_x, min_y + labelsize[1]), 
+				  (min_x + labelsize[0], min_y - baseline),
+				  color, cv2.FILLED)
+	text_location = (min_x, min_y + labelsize[1])
+	cv2.putText(image, label, text_location, FONT_STYLE, FONT_SIZE, font_color, FONT_THICKNESS)
+						
+	return speed
 	
 def set_camera(display_width, display_height, fps):
 	""" Set Camera with configuration
@@ -291,6 +352,7 @@ def set_camera(display_width, display_height, fps):
 	picam.configure("preview")
 	
 	return picam
+
 	
 def add_text_to_image(image, text, text_location, style, size, color, thickness):
 	""" Add text to loaded Image
@@ -305,3 +367,32 @@ def add_text_to_image(image, text, text_location, style, size, color, thickness)
 		thickness: Font Thickness
 	"""
 	cv2.putText(image, text, text_location, style, size, color, thickness)
+
+
+def connect_to_database(host, user, password, database=None):
+	""" Connect to mysql Database
+	
+	Args:
+		host: Host where the database is hosted
+		user: Username log in as
+		password: User's Password
+		database: Database to use, None to not use a specific one
+		
+	Return:
+		Connection Object
+	"""
+	return pymysql.connect(host=host, user=user, password=password,
+						   database=database)
+						   
+
+def populate_database(cursor, table, speed, date_time):
+	""" Populate the database with speed and date
+	
+	Args:
+		Cursor: Database Object to execute SQL statements
+		table: Table in database
+		speed: Speed of trespasser
+		date_time: Date_time Trespassed
+	"""
+	statement = f"INSERT INTO {table}(speed, trespassed_at) VALUES ({speed}, '{date_time}');"
+	print(cursor.execute(statement))
